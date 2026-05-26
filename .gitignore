@@ -29,3 +29,16 @@ vendor/
 coverage/
 .cache/
 tmp/
+.pytest_cache/
+*.egg-info/
+.serena/
+
+# Test output files
+*.dcm
+*_response.json
+extracted.json
+embed_result.json
+openapi.json
+annotated_*.png
+original_*.png
+nul
