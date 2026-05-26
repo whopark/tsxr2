@@ -193,12 +193,14 @@ async def test_analyze_ribs_annotations_match_fractures(sample_dicom_path: Path)
         if f["fracture_status"] in ("fractured", "suspicious")
     ]
 
-    # Count other bone annotations (clavicle, scapula)
-    # The simulation marks right clavicle as fractured and right scapula as suspicious
+    # Count other bone annotations (clavicle, scapula, spine)
+    # The simulation marks right clavicle as fractured, right scapula as suspicious,
+    # and spine regions (mid_thoracic as fractured, lower_thoracic as osteoporosis)
     other_bone_annotations = [
         a for a in data["annotated_image"]["annotations"]
         if "clavicle" in a["associated_rib"].lower()
         or "scapula" in a["associated_rib"].lower()
+        or "spine" in a["associated_rib"].lower()
     ]
 
     # Rib annotations should match rib fractures
@@ -210,11 +212,17 @@ async def test_analyze_ribs_annotations_match_fractures(sample_dicom_path: Path)
     ]
     assert len(rib_annotations) == len(non_intact_ribs)
 
-    # Should have other bone annotations (simulation creates 2 non-intact)
-    assert len(other_bone_annotations) == 2  # Right clavicle + right scapula
+    # Get non-intact other bone findings from the analysis output
+    non_intact_other_bones = [
+        f for f in data["rib_analysis"]["other_bone_findings"]
+        if f["fracture_status"] in ("fractured", "suspicious", "osteoporosis")
+    ]
+
+    # Other bone annotations should match non-intact other bone findings
+    assert len(other_bone_annotations) == len(non_intact_other_bones)
 
     # Total annotations = rib + other bones
-    assert len(data["annotated_image"]["annotations"]) == len(non_intact_ribs) + 2
+    assert len(data["annotated_image"]["annotations"]) == len(non_intact_ribs) + len(non_intact_other_bones)
 
 
 @pytest.mark.asyncio

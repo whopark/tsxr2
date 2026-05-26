@@ -47,6 +47,12 @@ FRACTURE_STYLES: dict[str, ArrowStyle] = {
         head_length=15,
         label_bg_color=(180, 100, 0),
     ),
+    "osteoporosis": ArrowStyle(
+        color=(180, 0, 180),  # Purple/Magenta - osteoporotic changes
+        line_width=3,
+        head_length=15,
+        label_bg_color=(120, 0, 120),
+    ),
     "intact": ArrowStyle(
         color=(0, 200, 0),  # Green - normal (optional display)
         line_width=2,
@@ -105,7 +111,7 @@ def get_style_for_status(status: str) -> ArrowStyle:
     """Get the appropriate arrow style for a fracture status.
 
     Args:
-        status: Fracture status ("intact", "fractured", "suspicious").
+        status: Fracture status ("intact", "fractured", "suspicious", "osteoporosis").
 
     Returns:
         ArrowStyle for the given status.

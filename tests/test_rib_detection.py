@@ -278,10 +278,10 @@ class TestOtherBoneDetection:
         """Create a sample 512x512 RGB image."""
         return np.random.randint(0, 255, (512, 512, 3), dtype=np.uint8)
 
-    def test_simulate_other_bones_returns_4_findings(self, sample_image):
-        """Simulation should detect 4 other bones (2 clavicles, 2 scapulae)."""
+    def test_simulate_other_bones_returns_7_findings(self, sample_image):
+        """Simulation should detect 7 other bones (2 clavicles, 2 scapulae, 3 spine regions)."""
         results = simulate_other_bone_detection(sample_image)
-        assert len(results) == 4
+        assert len(results) == 7
 
     def test_simulate_includes_clavicles(self, sample_image):
         """Simulation should include both clavicles."""
@@ -313,12 +313,29 @@ class TestOtherBoneDetection:
             assert x1 < x2
             assert y1 < y2
 
+    def test_simulate_includes_spine_regions(self, sample_image):
+        """Simulation should include 3 thoracic spine regions."""
+        results = simulate_other_bone_detection(sample_image)
+        spine = [r for r in results if r.bone_name == "spine"]
+        assert len(spine) == 3
+        regions = {s.side for s in spine}
+        assert regions == {"upper_thoracic", "mid_thoracic", "lower_thoracic"}
+
     def test_simulate_includes_fractures(self, sample_image):
-        """Simulation should include some fracture/suspicious findings."""
+        """Simulation should include fracture, suspicious, and osteoporosis findings."""
         results = simulate_other_bone_detection(sample_image)
         non_intact = [r for r in results if r.fracture_status != "intact"]
-        # Simulation is configured with right clavicle fractured, right scapula suspicious
-        assert len(non_intact) >= 2
+        # Simulation has: right clavicle fractured, right scapula suspicious,
+        # mid_thoracic spine fractured, lower_thoracic spine osteoporosis
+        assert len(non_intact) >= 4
+
+    def test_simulate_includes_osteoporosis(self, sample_image):
+        """Simulation should include osteoporosis finding in lower thoracic spine."""
+        results = simulate_other_bone_detection(sample_image)
+        osteoporosis = [r for r in results if r.fracture_status == "osteoporosis"]
+        assert len(osteoporosis) == 1
+        assert osteoporosis[0].bone_name == "spine"
+        assert osteoporosis[0].side == "lower_thoracic"
 
 
 class TestOtherBoneFindingSchema:
@@ -358,6 +375,42 @@ class TestOtherBoneFindingSchema:
                 fracture_confidence=1.5,  # Invalid: > 1.0
             )
 
+    def test_valid_spine_finding_with_region(self):
+        """Spine finding with thoracic region should be valid."""
+        finding = OtherBoneFinding(
+            bone_name="spine",
+            side="mid_thoracic",
+            bbox=(200, 100, 280, 300),
+            fracture_status="fractured",
+            fracture_confidence=0.85,
+        )
+        assert finding.bone_name == "spine"
+        assert finding.side == "mid_thoracic"
+        assert finding.fracture_status == "fractured"
+
+    def test_valid_spine_with_osteoporosis(self):
+        """Spine finding with osteoporosis status should be valid."""
+        finding = OtherBoneFinding(
+            bone_name="spine",
+            side="lower_thoracic",
+            bbox=(200, 250, 280, 450),
+            fracture_status="osteoporosis",
+            fracture_confidence=0.72,
+        )
+        assert finding.fracture_status == "osteoporosis"
+        assert finding.side == "lower_thoracic"
+
+    def test_all_spine_regions_valid(self):
+        """All spine region values should be accepted."""
+        for region in ["upper_thoracic", "mid_thoracic", "lower_thoracic"]:
+            finding = OtherBoneFinding(
+                bone_name="spine",
+                side=region,
+                bbox=(200, 100, 280, 200),
+                fracture_confidence=0.80,
+            )
+            assert finding.side == region
+
 
 class TestOtherBoneLogFormatting:
     """Tests for other bone scan log formatting."""
@@ -383,6 +436,18 @@ class TestOtherBoneLogFormatting:
         assert "right" in entry.lower()
         assert "SUSPICIOUS" in entry
 
+    def test_format_spine_region(self):
+        """Spine with thoracic region should format correctly."""
+        entry = format_other_bone_log_entry("spine", "mid_thoracic", "fractured", 0.85)
+        assert "MID THORACIC SPINE" in entry
+        assert "FRACTURE" in entry
+
+    def test_format_spine_osteoporosis(self):
+        """Spine with osteoporosis should show 'OSTEOPOROSIS'."""
+        entry = format_other_bone_log_entry("spine", "lower_thoracic", "osteoporosis", 0.72)
+        assert "LOWER THORACIC SPINE" in entry
+        assert "OSTEOPOROSIS" in entry
+
 
 class TestFullAnalysisWithOtherBones:
     """Tests for complete analysis including clavicle and scapula."""
@@ -401,7 +466,7 @@ class TestFullAnalysisWithOtherBones:
             include_other_bones=True,
         )
         assert result.other_bone_findings is not None
-        assert len(result.other_bone_findings) == 4  # 2 clavicles + 2 scapulae
+        assert len(result.other_bone_findings) == 7  # 2 clavicles + 2 scapulae + 3 spine
 
     def test_full_analysis_scan_order_includes_other_bones(self, sample_image):
         """Scan order report should include other bone entries."""
@@ -411,12 +476,12 @@ class TestFullAnalysisWithOtherBones:
             use_simulation=True,
             include_other_bones=True,
         )
-        # Find entries containing clavicle or scapula
+        # Find entries containing clavicle, scapula, or spine
         other_bone_entries = [
             e for e in result.scan_order_report
-            if "clavicle" in e.lower() or "scapula" in e.lower()
+            if "clavicle" in e.lower() or "scapula" in e.lower() or "spine" in e.lower()
         ]
-        assert len(other_bone_entries) >= 4  # At least 4 other bone entries
+        assert len(other_bone_entries) >= 7  # At least 7 other bone entries
 
     def test_full_analysis_without_other_bones(self, sample_image):
         """Analysis without other bones should have no other_bone_findings."""

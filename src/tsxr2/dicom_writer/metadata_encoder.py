@@ -138,15 +138,18 @@ def format_image_comments(
         rib_ids = ", ".join(f.rib_id for f in rib_suspicious)
         lines.append(f"RIB SUSPICIOUS: {rib_ids}")
 
-    # Other bone findings (clavicle, scapula)
+    # Other bone findings (clavicle, scapula, spine)
     if other_bone_findings:
-        # Classify by confidence threshold
+        # Separate spine findings from other bones
+        spine_findings = [f for f in other_bone_findings if f.bone_name == "spine"]
+        non_spine_findings = [f for f in other_bone_findings if f.bone_name != "spine"]
+
+        # Classify non-spine bones by fracture_status
         other_fractures = [
-            f for f in other_bone_findings if f.fracture_confidence >= 0.75
+            f for f in non_spine_findings if f.fracture_status == "fractured"
         ]
         other_suspicious = [
-            f for f in other_bone_findings
-            if 0.5 <= f.fracture_confidence < 0.75
+            f for f in non_spine_findings if f.fracture_status == "suspicious"
         ]
 
         if other_fractures:
@@ -161,12 +164,29 @@ def format_image_comments(
             )
             lines.append(f"OTHER BONE SUSPICIOUS: {bone_ids}")
 
+        # Spine findings (fractures and osteoporosis)
+        spine_abnormal = [
+            f for f in spine_findings if f.fracture_status in ("fractured", "suspicious", "osteoporosis")
+        ]
+        if spine_abnormal:
+            spine_labels = []
+            for f in spine_abnormal:
+                region = f.side.upper().replace("_", " ")
+                if f.fracture_status == "fractured":
+                    spine_labels.append(f"{region} (fracture)")
+                elif f.fracture_status == "osteoporosis":
+                    spine_labels.append(f"{region} (osteoporosis)")
+                else:
+                    spine_labels.append(f"{region} (suspicious)")
+            lines.append(f"SPINE FINDINGS: {', '.join(spine_labels)}")
+
     # Summary
     total_rib = len(rib_fractures) + len(rib_suspicious)
     total_other = 0
     if other_bone_findings:
         total_other = len([
-            f for f in other_bone_findings if f.fracture_confidence >= 0.5
+            f for f in other_bone_findings
+            if f.fracture_status in ("fractured", "suspicious", "osteoporosis")
         ])
 
     if total_rib == 0 and total_other == 0:

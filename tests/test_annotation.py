@@ -49,6 +49,11 @@ class TestFractureStyles:
         style = get_style_for_status("intact")
         assert style.color == (0, 200, 0)
 
+    def test_osteoporosis_style_is_purple(self):
+        """Osteoporosis status should use purple/magenta color."""
+        style = get_style_for_status("osteoporosis")
+        assert style.color == (180, 0, 180)
+
     def test_unknown_status_returns_default(self):
         """Unknown status should return default style."""
         style = get_style_for_status("unknown")

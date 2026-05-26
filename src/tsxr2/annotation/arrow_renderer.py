@@ -347,12 +347,15 @@ def annotate_other_bone_findings(
     used_positions: list[tuple[int, int]] = []
 
     for finding in findings:
-        # Determine fracture status from map or confidence
+        # Determine fracture status: use explicit status from finding, override map, or infer
         bone_id = f"{finding.bone_name}_{finding.side}"
         if fracture_status_map and bone_id in fracture_status_map:
             status = fracture_status_map[bone_id]
+        elif finding.fracture_status != "intact":
+            # Use the explicit status from the finding (handles osteoporosis, etc.)
+            status = finding.fracture_status
         else:
-            # Infer status from confidence
+            # Infer status from confidence as fallback
             if finding.fracture_confidence >= 0.75:
                 status = "fractured"
             elif finding.fracture_confidence >= 0.5:
@@ -372,11 +375,14 @@ def annotate_other_bone_findings(
         cy = (finding.bbox[1] + finding.bbox[3]) // 2
         target = (cx, cy)
 
-        # Determine arrow direction based on bone side
-        # Clavicles are at top, so arrows come from above/below
+        # Determine arrow direction based on bone type and location
+        # Clavicles are at top, so arrows come from below
         # Scapulae are lateral, so arrows come from sides
+        # Spine is midline, so arrows come from the side (prefer left)
         if finding.bone_name == "clavicle":
             direction: OffsetDirection = "bottom"  # Arrow from below
+        elif finding.bone_name == "spine":
+            direction = "left"  # Arrow from left side for midline spine
         elif finding.side == "left":
             direction = "right"  # Arrow from right for left-side bones
         else:
@@ -402,7 +408,12 @@ def annotate_other_bone_findings(
         draw_arrow(draw, origin, target, style)
 
         # Draw label if enabled
-        label = f"{finding.side.upper()} {finding.bone_name.upper()} {status.upper()}"
+        # Format label based on bone type (spine regions need special handling)
+        if finding.bone_name == "spine":
+            region_label = finding.side.upper().replace("_", " ")
+            label = f"{region_label} SPINE {status.upper()}"
+        else:
+            label = f"{finding.side.upper()} {finding.bone_name.upper()} {status.upper()}"
         if config.show_labels:
             label_offset_x = -30 if origin[0] < target[0] else 30
             label_offset_y = -15 if direction == "bottom" else 0

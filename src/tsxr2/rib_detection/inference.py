@@ -287,6 +287,59 @@ def simulate_other_bone_detection(
         fracture_confidence=0.55 + np.random.random() * 0.2,
     ))
 
+    # Thoracic spine (visible vertebrae T1-T12 in chest X-ray)
+    # Spine is midline, running vertically through the chest
+    spine_y_start = int(h * 0.08)
+    spine_y_end = int(h * 0.85)
+    spine_x_center = w // 2
+    spine_width = int(w * 0.08)
+
+    # Simulate vertebral bodies (upper, middle, lower thoracic)
+    # Upper thoracic (T1-T4) - usually intact
+    results.append(OtherBoneDetectionResult(
+        bone_name="spine",
+        side="upper_thoracic",  # T1-T4 region
+        bbox=(
+            spine_x_center - spine_width,
+            spine_y_start,
+            spine_x_center + spine_width,
+            int(h * 0.25),
+        ),
+        detection_score=0.78 + np.random.random() * 0.15,
+        fracture_status="intact",
+        fracture_confidence=0.88 + np.random.random() * 0.1,
+    ))
+
+    # Middle thoracic (T5-T8) - simulate compression fracture for testing
+    results.append(OtherBoneDetectionResult(
+        bone_name="spine",
+        side="mid_thoracic",  # T5-T8 region
+        bbox=(
+            spine_x_center - spine_width,
+            int(h * 0.25),
+            spine_x_center + spine_width,
+            int(h * 0.50),
+        ),
+        detection_score=0.82 + np.random.random() * 0.12,
+        fracture_status="fractured",  # Compression fracture
+        fracture_confidence=0.75 + np.random.random() * 0.2,
+    ))
+
+    # Lower thoracic (T9-T12) - simulate osteoporosis for testing
+    results.append(OtherBoneDetectionResult(
+        bone_name="spine",
+        side="lower_thoracic",  # T9-T12 region
+        bbox=(
+            spine_x_center - spine_width,
+            int(h * 0.50),
+            spine_x_center + spine_width,
+            spine_y_end,
+        ),
+        detection_score=0.80 + np.random.random() * 0.12,
+        fracture_status="osteoporosis",  # Osteoporotic changes
+        fracture_confidence=0.65 + np.random.random() * 0.2,
+    ))
+
     return results
 
 
@@ -299,20 +352,26 @@ def format_other_bone_log_entry(
     """Format a scan log entry for other bone findings.
 
     Args:
-        bone_name: Name of the bone (e.g., "clavicle", "scapula")
-        side: Anatomical side ("left", "right", "midline")
-        status: Fracture status ("intact", "fractured", "suspicious")
+        bone_name: Name of the bone (e.g., "clavicle", "scapula", "spine")
+        side: Anatomical side ("left", "right", "midline", "upper_thoracic", etc.)
+        status: Fracture status ("intact", "fractured", "suspicious", "osteoporosis")
         confidence: Detection confidence (0.0-1.0)
 
     Returns:
         Formatted log entry string
     """
-    bone_label = f"{side.upper()} {bone_name.upper()}"
+    # Format bone label (handle spine regions specially)
+    if bone_name == "spine":
+        bone_label = f"{side.upper().replace('_', ' ')} SPINE"
+    else:
+        bone_label = f"{side.upper()} {bone_name.upper()}"
 
     if status == "fractured":
         status_marker = "FRACTURE DETECTED"
     elif status == "suspicious":
         status_marker = "SUSPICIOUS"
+    elif status == "osteoporosis":
+        status_marker = "OSTEOPOROSIS"
     else:
         status_marker = "intact"
 
@@ -408,6 +467,7 @@ def systematic_rib_scan(
                     bone_name=clavicle.bone_name,
                     side=clavicle.side,
                     bbox=clavicle.bbox,
+                    fracture_status=clavicle.fracture_status,
                     fracture_confidence=clavicle.fracture_confidence,
                 )
                 other_bone_findings.append(finding)
@@ -434,6 +494,7 @@ def systematic_rib_scan(
                     bone_name=scapula.bone_name,
                     side=scapula.side,
                     bbox=scapula.bbox,
+                    fracture_status=scapula.fracture_status,
                     fracture_confidence=scapula.fracture_confidence,
                 )
                 other_bone_findings.append(finding)
@@ -447,6 +508,34 @@ def systematic_rib_scan(
                 scan_log.append(log_entry)
 
                 if scapula.fracture_status == "fractured":
+                    other_bone_fracture_count += 1
+
+        # Process spine (upper, mid, lower thoracic)
+        for region in ["upper_thoracic", "mid_thoracic", "lower_thoracic"]:
+            spine = next(
+                (d for d in other_bone_detections if d.bone_name == "spine" and d.side == region),
+                None,
+            )
+            if spine:
+                finding = OtherBoneFinding(
+                    bone_name=spine.bone_name,
+                    side=spine.side,
+                    bbox=spine.bbox,
+                    fracture_status=spine.fracture_status,
+                    fracture_confidence=spine.fracture_confidence,
+                )
+                other_bone_findings.append(finding)
+
+                log_entry = format_other_bone_log_entry(
+                    spine.bone_name,
+                    spine.side,
+                    spine.fracture_status,
+                    spine.fracture_confidence,
+                )
+                scan_log.append(log_entry)
+
+                # Count fractures and osteoporosis as significant findings
+                if spine.fracture_status in ("fractured", "osteoporosis"):
                     other_bone_fracture_count += 1
 
     # Calculate timing

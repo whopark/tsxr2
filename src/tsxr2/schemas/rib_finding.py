@@ -61,13 +61,19 @@ class OtherBoneFinding(BaseModel):
     """Non-rib bone fracture finding (clavicle, scapula, spine)."""
 
     bone_name: str = Field(
-        ..., description="Bone name (e.g., 'clavicle', 'scapula', 'vertebra')"
+        ..., description="Bone name (e.g., 'clavicle', 'scapula', 'spine')"
     )
-    side: Literal["left", "right", "midline"] = Field(
-        ..., description="Anatomical side"
+    side: Literal[
+        "left", "right", "midline",
+        "upper_thoracic", "mid_thoracic", "lower_thoracic"  # Spine regions
+    ] = Field(
+        ..., description="Anatomical side or spine region"
     )
     bbox: tuple[int, int, int, int] = Field(
         ..., description="Bounding box [x1, y1, x2, y2]"
+    )
+    fracture_status: Literal["intact", "fractured", "suspicious", "osteoporosis"] = Field(
+        default="intact", description="Fracture/pathology classification"
     )
     fracture_confidence: float = Field(
         ..., ge=0.0, le=1.0, description="Fracture detection confidence"
