@@ -1,7 +1,8 @@
 """Rib fracture detection module for systematic chest X-ray analysis.
 
 This module provides:
-- FCOS-based rib detection and localization
+- YOLOv8-based rib fracture detection (recommended)
+- FCOS-based rib detection and localization (alternative)
 - Fracture classification per individual rib
 - Systematic scanning: L1→L10, R1→R10, then other bones
 """
@@ -11,12 +12,17 @@ from tsxr2.rib_detection.detector import (
     RibFractureHead,
     load_rib_detector,
 )
+from tsxr2.rib_detection.yolo_detector import (
+    YOLOv8RibDetector,
+    load_yolo_detector,
+)
 from tsxr2.rib_detection.inference import (
     OtherBoneDetectionResult,
     RibDetectionResult,
     format_other_bone_log_entry,
     run_full_rib_analysis,
     run_rib_detection,
+    run_yolo_rib_detection,
     simulate_other_bone_detection,
     simulate_rib_detection,
     systematic_rib_scan,
@@ -41,7 +47,10 @@ from tsxr2.rib_detection.rib_labels import (
 )
 
 __all__ = [
-    # Model
+    # YOLO Model (recommended)
+    "YOLOv8RibDetector",
+    "load_yolo_detector",
+    # FCOS Model (alternative)
     "FCOSRibDetector",
     "RibFractureHead",
     "load_rib_detector",
@@ -51,6 +60,7 @@ __all__ = [
     "format_other_bone_log_entry",
     "run_full_rib_analysis",
     "run_rib_detection",
+    "run_yolo_rib_detection",
     "simulate_other_bone_detection",
     "simulate_rib_detection",
     "systematic_rib_scan",

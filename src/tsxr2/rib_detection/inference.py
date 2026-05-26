@@ -2,10 +2,16 @@
 
 Handles image preprocessing, model inference, and systematic rib scanning
 following the clinical protocol: L1→L10, R1→R10, then other bones.
+
+Supports multiple detection backends:
+- YOLOv8: Real-time rib fracture detection (recommended)
+- FCOS: Alternative anchor-free detector
+- Simulation: For testing when no trained model is available
 """
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -14,6 +20,7 @@ from numpy.typing import NDArray
 from torchvision import transforms
 
 from tsxr2.rib_detection.detector import FCOSRibDetector
+from tsxr2.rib_detection.yolo_detector import YOLOv8RibDetector, load_yolo_detector
 from tsxr2.rib_detection.rib_labels import (
     FRACTURE_CLASSES,
     OTHER_BONES,
@@ -149,6 +156,36 @@ def run_rib_detection(
             detection_score=float(score),
             fracture_status=frac_status,
             fracture_confidence=frac_conf,
+        ))
+
+    return results
+
+
+def run_yolo_rib_detection(
+    detector: YOLOv8RibDetector,
+    image: NDArray[np.uint8],
+) -> list[RibDetectionResult]:
+    """Run rib detection using YOLOv8 model.
+
+    Args:
+        detector: Loaded YOLOv8 rib detector.
+        image: Normalized image array (H, W, 3) or (H, W) uint8.
+
+    Returns:
+        List of RibDetectionResult for each detected rib.
+    """
+    # Run YOLO detection with rib ID mapping
+    yolo_detections = detector.detect_ribs(image)
+
+    # Convert to RibDetectionResult format
+    results = []
+    for det in yolo_detections:
+        results.append(RibDetectionResult(
+            rib_id=det['rib_id'],
+            bbox=det['bbox'],
+            detection_score=det['detection_confidence'],
+            fracture_status=det['fracture_status'],
+            fracture_confidence=det['fracture_confidence'],
         ))
 
     return results
@@ -558,47 +595,77 @@ def systematic_rib_scan(
 
 
 def run_full_rib_analysis(
-    model: FCOSRibDetector | None,
-    image: NDArray[np.uint8],
+    model: FCOSRibDetector | None = None,
+    image: NDArray[np.uint8] = None,
     device: torch.device | None = None,
     detection_threshold: float = 0.5,
     use_simulation: bool = False,
     include_other_bones: bool = True,
+    yolo_detector: YOLOv8RibDetector | None = None,
+    yolo_model_path: Path | str | None = None,
 ) -> RibAnalysisOutput:
     """Run complete rib fracture analysis pipeline.
 
     Scans ribs systematically (L1→L10, R1→R10) then scans other bones
     (clavicle, scapula) for fractures.
 
+    Detection priority:
+    1. If yolo_detector is provided, use it directly
+    2. If yolo_model_path is provided, load and use YOLO model
+    3. If model (FCOS) is provided, use FCOS
+    4. If use_simulation=True or no model, use simulation
+
     Args:
-        model: FCOS rib detector (can be None if using simulation).
-        image: Normalized image array (H, W, 3) uint8.
+        model: FCOS rib detector (can be None if using simulation or YOLO).
+        image: Normalized image array (H, W, 3) or (H, W) uint8.
         device: Device for inference (ignored if using simulation).
         detection_threshold: Confidence threshold for detections.
         use_simulation: If True, use simulated detections for testing.
         include_other_bones: If True, also scan clavicle and scapula.
+        yolo_detector: Pre-loaded YOLOv8 detector (highest priority).
+        yolo_model_path: Path to YOLO weights file to load.
 
     Returns:
         RibAnalysisOutput with complete systematic scan results.
     """
+    if image is None:
+        raise ValueError("image is required")
+
     # Get image dimensions
     h, w = image.shape[:2]
     image_dimensions = (w, h)
 
-    # Run rib detection
-    if use_simulation or model is None:
+    # Determine detection method and run
+    rib_detections: list[RibDetectionResult] = []
+
+    if yolo_detector is not None:
+        # Use provided YOLO detector
+        rib_detections = run_yolo_rib_detection(yolo_detector, image)
+    elif yolo_model_path is not None:
+        # Load and use YOLO model
+        try:
+            yolo_detector = load_yolo_detector(
+                model_path=yolo_model_path,
+                conf_threshold=detection_threshold,
+            )
+            rib_detections = run_yolo_rib_detection(yolo_detector, image)
+        except FileNotFoundError:
+            # Fall back to simulation if model file not found
+            rib_detections = simulate_rib_detection(image, detection_threshold)
+    elif use_simulation or model is None:
+        # Use simulation
         rib_detections = simulate_rib_detection(image, detection_threshold)
     else:
+        # Use FCOS model
         if device is None:
             device = torch.device("cpu")
         rib_detections = run_rib_detection(model, image, device, detection_threshold)
 
-    # Run other bone detection (clavicle, scapula)
+    # Run other bone detection (clavicle, scapula, spine)
+    # Currently only simulation is available for other bones
     other_bone_detections = None
     if include_other_bones:
-        if use_simulation or model is None:
-            other_bone_detections = simulate_other_bone_detection(image)
-        # TODO: Add real model inference for other bones when available
+        other_bone_detections = simulate_other_bone_detection(image)
 
     # Perform systematic scan
     return systematic_rib_scan(rib_detections, image_dimensions, other_bone_detections)

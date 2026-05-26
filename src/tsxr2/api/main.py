@@ -33,7 +33,8 @@ from tsxr2.reliability import (
     validate_dicom,
     validate_image_quality,
 )
-from tsxr2.rib_detection import run_full_rib_analysis
+from tsxr2.rib_detection import run_full_rib_analysis, load_yolo_detector
+from tsxr2.rib_detection.yolo_detector import DEFAULT_MODEL_PATH as YOLO_MODEL_PATH
 from tsxr2.schemas import (
     AnnotatedImageOutput,
     ConfidenceInfo,
@@ -51,6 +52,7 @@ from tsxr2.tsxr.model_loader import TSXrModel
 # Global model cache
 _model: TSXrModel | None = None
 _device: torch.device | None = None
+_yolo_detector = None  # Cached YOLO rib detector
 
 # Metrics tracking
 _startup_time: float | None = None
@@ -574,6 +576,7 @@ async def analyze_ribs(
     include_annotations: bool = True,
     show_intact_ribs: bool = False,
     embed_in_dicom: bool = False,
+    use_yolo: bool = True,
 ) -> RibAnalysisResponse:
     """Analyze a DICOM chest X-ray for rib fractures with systematic scanning.
 
@@ -591,6 +594,8 @@ async def analyze_ribs(
         show_intact_ribs: If True, annotate all ribs (not just fractures).
         embed_in_dicom: If True, embed findings in DICOM private tags.
             Use /analyze-ribs/dicom to download the modified DICOM file.
+        use_yolo: If True (default), use YOLOv8 model for real detection.
+            Falls back to simulation if model not available.
 
     Returns:
         RibAnalysisResponse with:
@@ -603,7 +608,7 @@ async def analyze_ribs(
     Raises:
         HTTPException: If file is invalid or analysis fails.
     """
-    global _request_counts
+    global _request_counts, _yolo_detector
     _request_counts["analyze_ribs"] += 1
 
     start_time = time.time()
@@ -629,13 +634,31 @@ async def analyze_ribs(
             window_width=dicom_data.metadata.get("window_width"),
         )
 
-        # Run rib fracture detection (using simulation for now)
-        # In production, pass the trained rib detection model
+        # Run rib fracture detection
+        # Try YOLO model first if requested, fall back to simulation
+        use_simulation = True
+        yolo_detector_to_use = None
+
+        if use_yolo and YOLO_MODEL_PATH.exists():
+            try:
+                # Load YOLO detector if not cached
+                if _yolo_detector is None:
+                    _yolo_detector = load_yolo_detector(
+                        model_path=YOLO_MODEL_PATH,
+                        conf_threshold=0.01,  # Low threshold for medical imaging
+                    )
+                yolo_detector_to_use = _yolo_detector
+                use_simulation = False
+            except Exception:
+                # Fall back to simulation if YOLO fails to load
+                pass
+
         rib_analysis = run_full_rib_analysis(
-            model=None,  # Use simulation mode
+            model=None,
             image=normalized,
             device=None,
-            use_simulation=True,  # Enable simulation until model is trained
+            use_simulation=use_simulation,
+            yolo_detector=yolo_detector_to_use,
         )
 
         # Prepare response
