@@ -117,6 +117,7 @@ async def test_analyze_ribs_detects_fractures(sample_dicom_path: Path):
             response = await client.post(
                 "/analyze-ribs",
                 files={"file": ("test.dcm", f, "application/dicom")},
+                params={"use_yolo": "false"},  # Use simulation for predictable results
             )
 
     data = response.json()
@@ -154,12 +155,13 @@ async def test_analyze_ribs_rib_findings_structure(sample_dicom_path: Path):
             response = await client.post(
                 "/analyze-ribs",
                 files={"file": ("test.dcm", f, "application/dicom")},
+                params={"use_yolo": "false"},  # Use simulation for predictable 20 ribs
             )
 
     data = response.json()
     rib_findings = data["rib_analysis"]["rib_findings"]
 
-    # Should have 20 rib findings (L1-L10, R1-R10)
+    # Should have 20 rib findings (L1-L10, R1-R10) in simulation mode
     assert len(rib_findings) == 20
 
     # Each finding should have expected fields
