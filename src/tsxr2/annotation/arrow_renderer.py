@@ -18,6 +18,7 @@ from tsxr2.annotation.styles import (
 from tsxr2.schemas.rib_finding import (
     ArrowAnnotation,
     CoordinatePoint,
+    OtherBoneFinding,
     RibFinding,
 )
 
@@ -313,3 +314,112 @@ def _adjust_for_overlap(
             y += threshold
 
     return (x, y)
+
+
+def annotate_other_bone_findings(
+    image: Image.Image,
+    findings: Sequence[OtherBoneFinding],
+    config: AnnotationConfig | None = None,
+    fracture_status_map: dict[str, str] | None = None,
+) -> tuple[Image.Image, list[ArrowAnnotation]]:
+    """Annotate clavicle, scapula, and other bone findings with arrows.
+
+    Args:
+        image: PIL Image to annotate.
+        findings: List of OtherBoneFinding to annotate.
+        config: AnnotationConfig for rendering options.
+        fracture_status_map: Map of bone identifier to fracture status.
+            Keys should be like "clavicle_left", "scapula_right".
+            If not provided, uses confidence thresholds.
+
+    Returns:
+        Tuple of (annotated image, list of ArrowAnnotation metadata).
+    """
+    if config is None:
+        config = AnnotationConfig()
+
+    # Create a copy to avoid modifying original
+    annotated = image.copy()
+    draw = ImageDraw.Draw(annotated)
+    annotations: list[ArrowAnnotation] = []
+
+    # Track arrow positions to avoid overlap
+    used_positions: list[tuple[int, int]] = []
+
+    for finding in findings:
+        # Determine fracture status from map or confidence
+        bone_id = f"{finding.bone_name}_{finding.side}"
+        if fracture_status_map and bone_id in fracture_status_map:
+            status = fracture_status_map[bone_id]
+        else:
+            # Infer status from confidence
+            if finding.fracture_confidence >= 0.75:
+                status = "fractured"
+            elif finding.fracture_confidence >= 0.5:
+                status = "suspicious"
+            else:
+                status = "intact"
+
+        # Skip intact bones unless configured to show them
+        if status == "intact" and not config.show_intact_ribs:
+            continue
+
+        # Get style for this fracture status
+        style = get_style_for_status(status)
+
+        # Calculate centroid from bounding box
+        cx = (finding.bbox[0] + finding.bbox[2]) // 2
+        cy = (finding.bbox[1] + finding.bbox[3]) // 2
+        target = (cx, cy)
+
+        # Determine arrow direction based on bone side
+        # Clavicles are at top, so arrows come from above/below
+        # Scapulae are lateral, so arrows come from sides
+        if finding.bone_name == "clavicle":
+            direction: OffsetDirection = "bottom"  # Arrow from below
+        elif finding.side == "left":
+            direction = "right"  # Arrow from right for left-side bones
+        else:
+            direction = "left"  # Arrow from left for right-side bones
+
+        # Calculate origin
+        origin = calculate_arrow_offset(
+            target,
+            image.size,
+            config.arrow_offset,
+            direction,
+        )
+
+        # Adjust if overlapping with existing arrows
+        if config.avoid_overlap:
+            origin = _adjust_for_overlap(
+                origin, used_positions, config.overlap_threshold
+            )
+
+        used_positions.append(origin)
+
+        # Draw arrow
+        draw_arrow(draw, origin, target, style)
+
+        # Draw label if enabled
+        label = f"{finding.side.upper()} {finding.bone_name.upper()} {status.upper()}"
+        if config.show_labels:
+            label_offset_x = -30 if origin[0] < target[0] else 30
+            label_offset_y = -15 if direction == "bottom" else 0
+            label_pos = (origin[0] + label_offset_x, origin[1] + label_offset_y)
+            draw_label(draw, label_pos, label, style)
+
+        # Create annotation metadata
+        annotation = ArrowAnnotation(
+            target_point=CoordinatePoint(x=target[0], y=target[1]),
+            origin_point=CoordinatePoint(x=origin[0], y=origin[1]),
+            label=label,
+            color=style.color,
+            associated_rib=bone_id,  # Use bone_id as identifier
+        )
+        annotations.append(annotation)
+
+        # Update the finding's annotation field
+        finding.annotation = annotation
+
+    return annotated, annotations

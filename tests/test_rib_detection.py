@@ -9,14 +9,16 @@ from tsxr2.rib_detection import (
     VISIBLE_LEFT_RIBS,
     VISIBLE_RIB_LABELS,
     VISIBLE_RIGHT_RIBS,
+    format_other_bone_log_entry,
     format_scan_log_entry,
     get_rib_number,
     get_rib_side,
     is_valid_rib_id,
     run_full_rib_analysis,
+    simulate_other_bone_detection,
     simulate_rib_detection,
 )
-from tsxr2.schemas import RibFinding
+from tsxr2.schemas import OtherBoneFinding, RibFinding
 
 
 class TestRibLabels:
@@ -266,3 +268,162 @@ class TestFullRibAnalysis:
         )
         assert result.metadata.model_version == "rib-detector-v1.0"
         assert result.metadata.scan_duration_ms is not None
+
+
+class TestOtherBoneDetection:
+    """Tests for clavicle and scapula detection."""
+
+    @pytest.fixture
+    def sample_image(self) -> np.ndarray:
+        """Create a sample 512x512 RGB image."""
+        return np.random.randint(0, 255, (512, 512, 3), dtype=np.uint8)
+
+    def test_simulate_other_bones_returns_4_findings(self, sample_image):
+        """Simulation should detect 4 other bones (2 clavicles, 2 scapulae)."""
+        results = simulate_other_bone_detection(sample_image)
+        assert len(results) == 4
+
+    def test_simulate_includes_clavicles(self, sample_image):
+        """Simulation should include both clavicles."""
+        results = simulate_other_bone_detection(sample_image)
+        clavicles = [r for r in results if r.bone_name == "clavicle"]
+        assert len(clavicles) == 2
+        sides = {c.side for c in clavicles}
+        assert sides == {"left", "right"}
+
+    def test_simulate_includes_scapulae(self, sample_image):
+        """Simulation should include both scapulae."""
+        results = simulate_other_bone_detection(sample_image)
+        scapulae = [r for r in results if r.bone_name == "scapula"]
+        assert len(scapulae) == 2
+        sides = {s.side for s in scapulae}
+        assert sides == {"left", "right"}
+
+    def test_simulate_has_valid_bboxes(self, sample_image):
+        """All bounding boxes should be within image bounds."""
+        results = simulate_other_bone_detection(sample_image)
+        h, w = sample_image.shape[:2]
+
+        for r in results:
+            x1, y1, x2, y2 = r.bbox
+            assert 0 <= x1 < w
+            assert 0 <= x2 <= w
+            assert 0 <= y1 < h
+            assert 0 <= y2 <= h
+            assert x1 < x2
+            assert y1 < y2
+
+    def test_simulate_includes_fractures(self, sample_image):
+        """Simulation should include some fracture/suspicious findings."""
+        results = simulate_other_bone_detection(sample_image)
+        non_intact = [r for r in results if r.fracture_status != "intact"]
+        # Simulation is configured with right clavicle fractured, right scapula suspicious
+        assert len(non_intact) >= 2
+
+
+class TestOtherBoneFindingSchema:
+    """Tests for OtherBoneFinding Pydantic schema."""
+
+    def test_valid_clavicle_finding(self):
+        """Valid clavicle finding should be created successfully."""
+        finding = OtherBoneFinding(
+            bone_name="clavicle",
+            side="left",
+            bbox=(100, 50, 200, 80),
+            fracture_confidence=0.85,
+        )
+        assert finding.bone_name == "clavicle"
+        assert finding.side == "left"
+
+    def test_valid_scapula_finding(self):
+        """Valid scapula finding should be created successfully."""
+        finding = OtherBoneFinding(
+            bone_name="scapula",
+            side="right",
+            bbox=(50, 100, 150, 300),
+            fracture_confidence=0.65,
+        )
+        assert finding.bone_name == "scapula"
+        assert finding.side == "right"
+
+    def test_confidence_bounds(self):
+        """Confidence should be between 0 and 1."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            OtherBoneFinding(
+                bone_name="clavicle",
+                side="left",
+                bbox=(100, 50, 200, 80),
+                fracture_confidence=1.5,  # Invalid: > 1.0
+            )
+
+
+class TestOtherBoneLogFormatting:
+    """Tests for other bone scan log formatting."""
+
+    def test_format_intact_clavicle(self):
+        """Intact clavicle should show 'intact' status."""
+        entry = format_other_bone_log_entry("clavicle", "left", "intact", 0.92)
+        assert "clavicle" in entry.lower()
+        assert "left" in entry.lower()
+        assert "intact" in entry.lower()
+
+    def test_format_fractured_clavicle(self):
+        """Fractured clavicle should show 'FRACTURE'."""
+        entry = format_other_bone_log_entry("clavicle", "right", "fractured", 0.88)
+        assert "clavicle" in entry.lower()
+        assert "right" in entry.lower()
+        assert "FRACTURE" in entry
+
+    def test_format_suspicious_scapula(self):
+        """Suspicious scapula should show 'SUSPICIOUS'."""
+        entry = format_other_bone_log_entry("scapula", "right", "suspicious", 0.62)
+        assert "scapula" in entry.lower()
+        assert "right" in entry.lower()
+        assert "SUSPICIOUS" in entry
+
+
+class TestFullAnalysisWithOtherBones:
+    """Tests for complete analysis including clavicle and scapula."""
+
+    @pytest.fixture
+    def sample_image(self) -> np.ndarray:
+        """Create a sample 512x512 RGB image."""
+        return np.random.randint(0, 255, (512, 512, 3), dtype=np.uint8)
+
+    def test_full_analysis_includes_other_bone_findings(self, sample_image):
+        """Full analysis should include other bone findings."""
+        result = run_full_rib_analysis(
+            model=None,
+            image=sample_image,
+            use_simulation=True,
+            include_other_bones=True,
+        )
+        assert result.other_bone_findings is not None
+        assert len(result.other_bone_findings) == 4  # 2 clavicles + 2 scapulae
+
+    def test_full_analysis_scan_order_includes_other_bones(self, sample_image):
+        """Scan order report should include other bone entries."""
+        result = run_full_rib_analysis(
+            model=None,
+            image=sample_image,
+            use_simulation=True,
+            include_other_bones=True,
+        )
+        # Find entries containing clavicle or scapula
+        other_bone_entries = [
+            e for e in result.scan_order_report
+            if "clavicle" in e.lower() or "scapula" in e.lower()
+        ]
+        assert len(other_bone_entries) >= 4  # At least 4 other bone entries
+
+    def test_full_analysis_without_other_bones(self, sample_image):
+        """Analysis without other bones should have no other_bone_findings."""
+        result = run_full_rib_analysis(
+            model=None,
+            image=sample_image,
+            use_simulation=True,
+            include_other_bones=False,
+        )
+        assert result.other_bone_findings is None or len(result.other_bone_findings) == 0

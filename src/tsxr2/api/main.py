@@ -15,7 +15,11 @@ from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
 
-from tsxr2.annotation import AnnotationConfig, annotate_rib_findings
+from tsxr2.annotation import (
+    AnnotationConfig,
+    annotate_other_bone_findings,
+    annotate_rib_findings,
+)
 from tsxr2.dicom_writer import (
     add_fracture_findings_to_dicom,
     extract_findings_from_dicom,
@@ -647,7 +651,7 @@ async def analyze_ribs(
                 show_labels=True,
             )
 
-            # Annotate fractures (and suspicious ribs)
+            # Annotate rib fractures (and suspicious ribs)
             findings_to_annotate = [
                 f for f in rib_analysis.rib_findings
                 if f.fracture_status in ("fractured", "suspicious") or show_intact_ribs
@@ -658,6 +662,24 @@ async def analyze_ribs(
                 findings_to_annotate,
                 config,
             )
+
+            # Also annotate other bone findings (clavicle, scapula)
+            if rib_analysis.other_bone_findings:
+                # Build fracture status map from simulated detections
+                from tsxr2.rib_detection import simulate_other_bone_detection
+                other_bone_detections = simulate_other_bone_detection(normalized)
+                fracture_status_map = {
+                    f"{d.bone_name}_{d.side}": d.fracture_status
+                    for d in other_bone_detections
+                }
+
+                annotated_image, other_annotations = annotate_other_bone_findings(
+                    annotated_image,  # Use already annotated image
+                    rib_analysis.other_bone_findings,
+                    config,
+                    fracture_status_map,
+                )
+                annotations.extend(other_annotations)
 
             # Encode images to base64
             original_buffer = io.BytesIO()

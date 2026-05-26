@@ -16,6 +16,7 @@ from pydicom.uid import generate_uid
 
 from tsxr2.schemas.rib_finding import (
     ArrowAnnotation,
+    OtherBoneFinding,
     RibAnalysisOutput,
     RibFinding,
 )
@@ -29,12 +30,13 @@ PRIVATE_BLOCK = 0x0099
 # Tag format: (group, element) where element = (block << 8) | offset
 PRIVATE_TAGS = {
     "creator": (0x0099, 0x0010),  # Private Creator ID
-    "findings_json": (0x0099, 0x1001),  # JSON-encoded findings
+    "findings_json": (0x0099, 0x1001),  # JSON-encoded rib findings
     "annotations_json": (0x0099, 0x1002),  # JSON-encoded annotations
     "analysis_timestamp": (0x0099, 0x1003),  # Analysis timestamp
     "model_version": (0x0099, 0x1004),  # Model version string
     "fracture_count": (0x0099, 0x1005),  # Total fracture count
     "scan_order_log": (0x0099, 0x1006),  # Scan order report
+    "other_bones_json": (0x0099, 0x1007),  # JSON-encoded clavicle/scapula findings
 }
 
 
@@ -64,6 +66,28 @@ def encode_findings_json(findings: Sequence[RibFinding]) -> str:
     return json.dumps(findings_data, indent=None)
 
 
+def encode_other_bones_json(findings: Sequence[OtherBoneFinding]) -> str:
+    """Encode other bone findings (clavicle, scapula) to JSON string.
+
+    Args:
+        findings: List of OtherBoneFinding objects.
+
+    Returns:
+        JSON string representation of findings.
+    """
+    findings_data = []
+    for f in findings:
+        data = {
+            "bone_name": f.bone_name,
+            "side": f.side,
+            "bbox": list(f.bbox),
+            "fracture_confidence": f.fracture_confidence,
+        }
+        findings_data.append(data)
+
+    return json.dumps(findings_data, indent=None)
+
+
 def encode_annotations_json(annotations: Sequence[ArrowAnnotation]) -> str:
     """Encode arrow annotations to JSON string.
 
@@ -87,32 +111,73 @@ def encode_annotations_json(annotations: Sequence[ArrowAnnotation]) -> str:
     return json.dumps(annotations_data, indent=None)
 
 
-def format_image_comments(findings: Sequence[RibFinding]) -> str:
+def format_image_comments(
+    rib_findings: Sequence[RibFinding],
+    other_bone_findings: Sequence[OtherBoneFinding] | None = None,
+) -> str:
     """Format findings as human-readable image comments.
 
     Args:
-        findings: List of RibFinding objects.
+        rib_findings: List of RibFinding objects.
+        other_bone_findings: Optional list of OtherBoneFinding objects.
 
     Returns:
         Human-readable comment string for ImageComments tag.
     """
-    if not findings:
-        return "TSXr2 AI Analysis: No rib fractures detected."
-
-    fractures = [f for f in findings if f.fracture_status == "fractured"]
-    suspicious = [f for f in findings if f.fracture_status == "suspicious"]
-
     lines = ["TSXr2 AI Analysis Results:"]
 
-    if fractures:
-        rib_ids = ", ".join(f.rib_id for f in fractures)
-        lines.append(f"FRACTURES DETECTED: {rib_ids}")
+    # Rib findings
+    rib_fractures = [f for f in rib_findings if f.fracture_status == "fractured"]
+    rib_suspicious = [f for f in rib_findings if f.fracture_status == "suspicious"]
 
-    if suspicious:
-        rib_ids = ", ".join(f.rib_id for f in suspicious)
-        lines.append(f"SUSPICIOUS: {rib_ids}")
+    if rib_fractures:
+        rib_ids = ", ".join(f.rib_id for f in rib_fractures)
+        lines.append(f"RIB FRACTURES: {rib_ids}")
 
-    lines.append(f"Total findings: {len(fractures)} fractures, {len(suspicious)} suspicious")
+    if rib_suspicious:
+        rib_ids = ", ".join(f.rib_id for f in rib_suspicious)
+        lines.append(f"RIB SUSPICIOUS: {rib_ids}")
+
+    # Other bone findings (clavicle, scapula)
+    if other_bone_findings:
+        # Classify by confidence threshold
+        other_fractures = [
+            f for f in other_bone_findings if f.fracture_confidence >= 0.75
+        ]
+        other_suspicious = [
+            f for f in other_bone_findings
+            if 0.5 <= f.fracture_confidence < 0.75
+        ]
+
+        if other_fractures:
+            bone_ids = ", ".join(
+                f"{f.side.upper()} {f.bone_name.upper()}" for f in other_fractures
+            )
+            lines.append(f"OTHER BONE FRACTURES: {bone_ids}")
+
+        if other_suspicious:
+            bone_ids = ", ".join(
+                f"{f.side.upper()} {f.bone_name.upper()}" for f in other_suspicious
+            )
+            lines.append(f"OTHER BONE SUSPICIOUS: {bone_ids}")
+
+    # Summary
+    total_rib = len(rib_fractures) + len(rib_suspicious)
+    total_other = 0
+    if other_bone_findings:
+        total_other = len([
+            f for f in other_bone_findings if f.fracture_confidence >= 0.5
+        ])
+
+    if total_rib == 0 and total_other == 0:
+        lines.append("No fractures detected.")
+    else:
+        lines.append(
+            f"Total: {len(rib_fractures)} rib fractures, "
+            f"{len(rib_suspicious)} rib suspicious, "
+            f"{total_other} other bone findings"
+        )
+
     lines.append("NOTE: AI findings require radiologist verification.")
 
     return "\n".join(lines)
@@ -146,9 +211,14 @@ def add_fracture_findings_to_dicom(
     # Add private creator (required for private tags)
     modified.add_new(PRIVATE_TAGS["creator"], "LO", PRIVATE_CREATOR)
 
-    # Add findings JSON
+    # Add rib findings JSON
     findings_json = encode_findings_json(analysis_output.rib_findings)
     modified.add_new(PRIVATE_TAGS["findings_json"], "LT", findings_json)
+
+    # Add other bone findings JSON (clavicle, scapula)
+    if analysis_output.other_bone_findings:
+        other_bones_json = encode_other_bones_json(analysis_output.other_bone_findings)
+        modified.add_new(PRIVATE_TAGS["other_bones_json"], "LT", other_bones_json)
 
     # Add annotations JSON if provided
     if annotations:
@@ -173,7 +243,10 @@ def add_fracture_findings_to_dicom(
     modified.add_new(PRIVATE_TAGS["scan_order_log"], "LT", scan_log)
 
     # Add human-readable image comments (standard tag)
-    image_comments = format_image_comments(analysis_output.rib_findings)
+    image_comments = format_image_comments(
+        analysis_output.rib_findings,
+        analysis_output.other_bone_findings,
+    )
     modified.ImageComments = image_comments
 
     return modified
@@ -206,6 +279,14 @@ def extract_findings_from_dicom(dataset: Dataset) -> dict[str, Any] | None:
             result["findings"] = json.loads(dataset[findings_tag].value)
         except json.JSONDecodeError:
             result["findings"] = None
+
+    # Extract other bone findings JSON
+    other_bones_tag = PRIVATE_TAGS["other_bones_json"]
+    if other_bones_tag in dataset:
+        try:
+            result["other_bone_findings"] = json.loads(dataset[other_bones_tag].value)
+        except json.JSONDecodeError:
+            result["other_bone_findings"] = None
 
     # Extract annotations JSON
     annotations_tag = PRIVATE_TAGS["annotations_json"]

@@ -12,9 +12,12 @@ from tsxr2.rib_detection.detector import (
     load_rib_detector,
 )
 from tsxr2.rib_detection.inference import (
+    OtherBoneDetectionResult,
     RibDetectionResult,
+    format_other_bone_log_entry,
     run_full_rib_analysis,
     run_rib_detection,
+    simulate_other_bone_detection,
     simulate_rib_detection,
     systematic_rib_scan,
 )
@@ -43,9 +46,12 @@ __all__ = [
     "RibFractureHead",
     "load_rib_detector",
     # Inference
+    "OtherBoneDetectionResult",
     "RibDetectionResult",
+    "format_other_bone_log_entry",
     "run_full_rib_analysis",
     "run_rib_detection",
+    "simulate_other_bone_detection",
     "simulate_rib_detection",
     "systematic_rib_scan",
     # Constants

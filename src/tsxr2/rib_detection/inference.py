@@ -46,6 +46,18 @@ class RibDetectionResult:
     fracture_confidence: float
 
 
+@dataclass
+class OtherBoneDetectionResult:
+    """Raw detection result for non-rib bones (clavicle, scapula, etc.)."""
+
+    bone_name: str  # e.g., "clavicle", "scapula"
+    side: str  # "left", "right", or "midline"
+    bbox: tuple[int, int, int, int]  # x1, y1, x2, y2
+    detection_score: float
+    fracture_status: str
+    fracture_confidence: float
+
+
 def preprocess_for_detection(
     image: NDArray[np.uint8],
     target_size: int = 800,
@@ -214,17 +226,113 @@ def simulate_rib_detection(
     return results
 
 
+def simulate_other_bone_detection(
+    image: NDArray[np.uint8],
+) -> list[OtherBoneDetectionResult]:
+    """Simulate detection of clavicle, scapula, and other bones.
+
+    Creates synthetic detections based on typical chest X-ray anatomy.
+    This is a placeholder until a trained model is available.
+
+    Args:
+        image: Normalized image array (H, W, 3) uint8.
+
+    Returns:
+        List of simulated OtherBoneDetectionResult.
+    """
+    h, w = image.shape[:2]
+    results = []
+
+    # Clavicle positions (upper chest, bilateral)
+    # Left clavicle (appears on right side of image - patient's left)
+    results.append(OtherBoneDetectionResult(
+        bone_name="clavicle",
+        side="left",
+        bbox=(int(w * 0.50), int(h * 0.05), int(w * 0.80), int(h * 0.12)),
+        detection_score=0.85 + np.random.random() * 0.1,
+        fracture_status="intact",
+        fracture_confidence=0.90 + np.random.random() * 0.08,
+    ))
+
+    # Right clavicle (appears on left side of image - patient's right)
+    # Simulate a fracture for testing
+    results.append(OtherBoneDetectionResult(
+        bone_name="clavicle",
+        side="right",
+        bbox=(int(w * 0.20), int(h * 0.05), int(w * 0.50), int(h * 0.12)),
+        detection_score=0.88 + np.random.random() * 0.1,
+        fracture_status="fractured",
+        fracture_confidence=0.82 + np.random.random() * 0.15,
+    ))
+
+    # Scapula positions (lateral chest, bilateral)
+    # Left scapula (appears on right side of image)
+    results.append(OtherBoneDetectionResult(
+        bone_name="scapula",
+        side="left",
+        bbox=(int(w * 0.75), int(h * 0.10), int(w * 0.95), int(h * 0.45)),
+        detection_score=0.80 + np.random.random() * 0.15,
+        fracture_status="intact",
+        fracture_confidence=0.88 + np.random.random() * 0.1,
+    ))
+
+    # Right scapula (appears on left side of image)
+    # Simulate suspicious finding for testing
+    results.append(OtherBoneDetectionResult(
+        bone_name="scapula",
+        side="right",
+        bbox=(int(w * 0.05), int(h * 0.10), int(w * 0.25), int(h * 0.45)),
+        detection_score=0.82 + np.random.random() * 0.12,
+        fracture_status="suspicious",
+        fracture_confidence=0.55 + np.random.random() * 0.2,
+    ))
+
+    return results
+
+
+def format_other_bone_log_entry(
+    bone_name: str,
+    side: str,
+    status: str,
+    confidence: float,
+) -> str:
+    """Format a scan log entry for other bone findings.
+
+    Args:
+        bone_name: Name of the bone (e.g., "clavicle", "scapula")
+        side: Anatomical side ("left", "right", "midline")
+        status: Fracture status ("intact", "fractured", "suspicious")
+        confidence: Detection confidence (0.0-1.0)
+
+    Returns:
+        Formatted log entry string
+    """
+    bone_label = f"{side.upper()} {bone_name.upper()}"
+
+    if status == "fractured":
+        status_marker = "FRACTURE DETECTED"
+    elif status == "suspicious":
+        status_marker = "SUSPICIOUS"
+    else:
+        status_marker = "intact"
+
+    return f"{bone_label}: {status_marker} (conf: {confidence:.2f})"
+
+
 def systematic_rib_scan(
     detections: list[RibDetectionResult],
     image_dimensions: tuple[int, int],
+    other_bone_detections: list[OtherBoneDetectionResult] | None = None,
 ) -> RibAnalysisOutput:
     """Perform systematic rib scan following clinical protocol.
 
-    Scans ribs in order: L1→L10, R1→R10, then reports other bones.
+    Scans ribs in order: L1→L10, R1→R10, then scans other bones
+    (clavicle, scapula).
 
     Args:
         detections: List of raw rib detections.
         image_dimensions: Image (width, height) for coordinate mapping.
+        other_bone_detections: Optional list of clavicle/scapula detections.
 
     Returns:
         RibAnalysisOutput with systematic scan results.
@@ -241,6 +349,7 @@ def systematic_rib_scan(
     # Systematic scan following SCAN_ORDER
     rib_findings: list[RibFinding] = []
     fractures_detected: list[RibFinding] = []
+    other_bone_findings: list[OtherBoneFinding] = []
     scan_log: list[str] = []
 
     for scan_item in SCAN_ORDER:
@@ -285,8 +394,66 @@ def systematic_rib_scan(
             # Rib not detected
             scan_log.append(f"{scan_item}: NOT DETECTED")
 
+    # Process other bone detections (clavicle, scapula)
+    other_bone_fracture_count = 0
+    if other_bone_detections:
+        # Process clavicles first (left then right)
+        for side in ["left", "right"]:
+            clavicle = next(
+                (d for d in other_bone_detections if d.bone_name == "clavicle" and d.side == side),
+                None,
+            )
+            if clavicle:
+                finding = OtherBoneFinding(
+                    bone_name=clavicle.bone_name,
+                    side=clavicle.side,
+                    bbox=clavicle.bbox,
+                    fracture_confidence=clavicle.fracture_confidence,
+                )
+                other_bone_findings.append(finding)
+
+                log_entry = format_other_bone_log_entry(
+                    clavicle.bone_name,
+                    clavicle.side,
+                    clavicle.fracture_status,
+                    clavicle.fracture_confidence,
+                )
+                scan_log.append(log_entry)
+
+                if clavicle.fracture_status == "fractured":
+                    other_bone_fracture_count += 1
+
+        # Process scapulae (left then right)
+        for side in ["left", "right"]:
+            scapula = next(
+                (d for d in other_bone_detections if d.bone_name == "scapula" and d.side == side),
+                None,
+            )
+            if scapula:
+                finding = OtherBoneFinding(
+                    bone_name=scapula.bone_name,
+                    side=scapula.side,
+                    bbox=scapula.bbox,
+                    fracture_confidence=scapula.fracture_confidence,
+                )
+                other_bone_findings.append(finding)
+
+                log_entry = format_other_bone_log_entry(
+                    scapula.bone_name,
+                    scapula.side,
+                    scapula.fracture_status,
+                    scapula.fracture_confidence,
+                )
+                scan_log.append(log_entry)
+
+                if scapula.fracture_status == "fractured":
+                    other_bone_fracture_count += 1
+
     # Calculate timing
     scan_duration_ms = (time.time() - start_time) * 1000
+
+    # Total fracture count includes rib and other bone fractures
+    total_fractures = len(fractures_detected) + other_bone_fracture_count
 
     return RibAnalysisOutput(
         metadata=RibAnalysisMetadata(
@@ -295,9 +462,9 @@ def systematic_rib_scan(
         ),
         rib_findings=rib_findings,
         fractures_detected=fractures_detected,
-        other_bone_findings=[],  # Placeholder for other bone detection
+        other_bone_findings=other_bone_findings,
         scan_order_report=scan_log,
-        total_fracture_count=len(fractures_detected),
+        total_fracture_count=total_fractures,
     )
 
 
@@ -307,8 +474,12 @@ def run_full_rib_analysis(
     device: torch.device | None = None,
     detection_threshold: float = 0.5,
     use_simulation: bool = False,
+    include_other_bones: bool = True,
 ) -> RibAnalysisOutput:
     """Run complete rib fracture analysis pipeline.
+
+    Scans ribs systematically (L1→L10, R1→R10) then scans other bones
+    (clavicle, scapula) for fractures.
 
     Args:
         model: FCOS rib detector (can be None if using simulation).
@@ -316,6 +487,7 @@ def run_full_rib_analysis(
         device: Device for inference (ignored if using simulation).
         detection_threshold: Confidence threshold for detections.
         use_simulation: If True, use simulated detections for testing.
+        include_other_bones: If True, also scan clavicle and scapula.
 
     Returns:
         RibAnalysisOutput with complete systematic scan results.
@@ -324,13 +496,20 @@ def run_full_rib_analysis(
     h, w = image.shape[:2]
     image_dimensions = (w, h)
 
-    # Run detection
+    # Run rib detection
     if use_simulation or model is None:
-        detections = simulate_rib_detection(image, detection_threshold)
+        rib_detections = simulate_rib_detection(image, detection_threshold)
     else:
         if device is None:
             device = torch.device("cpu")
-        detections = run_rib_detection(model, image, device, detection_threshold)
+        rib_detections = run_rib_detection(model, image, device, detection_threshold)
+
+    # Run other bone detection (clavicle, scapula)
+    other_bone_detections = None
+    if include_other_bones:
+        if use_simulation or model is None:
+            other_bone_detections = simulate_other_bone_detection(image)
+        # TODO: Add real model inference for other bones when available
 
     # Perform systematic scan
-    return systematic_rib_scan(detections, image_dimensions)
+    return systematic_rib_scan(rib_detections, image_dimensions, other_bone_detections)

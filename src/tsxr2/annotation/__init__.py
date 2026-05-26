@@ -5,6 +5,7 @@ marking detected fractures on chest X-ray images.
 """
 
 from tsxr2.annotation.arrow_renderer import (
+    annotate_other_bone_findings,
     annotate_rib_findings,
     calculate_arrow_offset,
     draw_arrow,
@@ -23,6 +24,7 @@ from tsxr2.annotation.styles import (
 
 __all__ = [
     # Arrow rendering
+    "annotate_other_bone_findings",
     "annotate_rib_findings",
     "calculate_arrow_offset",
     "draw_arrow",

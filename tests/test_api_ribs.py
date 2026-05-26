@@ -174,7 +174,7 @@ async def test_analyze_ribs_rib_findings_structure(sample_dicom_path: Path):
 
 @pytest.mark.asyncio
 async def test_analyze_ribs_annotations_match_fractures(sample_dicom_path: Path):
-    """Annotations should correspond to detected fractures/suspicious ribs."""
+    """Annotations should correspond to detected fractures/suspicious findings."""
     from tsxr2.api.main import app
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -188,14 +188,33 @@ async def test_analyze_ribs_annotations_match_fractures(sample_dicom_path: Path)
     data = response.json()
 
     # Get fractures and suspicious ribs
-    non_intact = [
+    non_intact_ribs = [
         f for f in data["rib_analysis"]["rib_findings"]
         if f["fracture_status"] in ("fractured", "suspicious")
     ]
 
-    # Annotations should match
-    annotations = data["annotated_image"]["annotations"]
-    assert len(annotations) == len(non_intact)
+    # Count other bone annotations (clavicle, scapula)
+    # The simulation marks right clavicle as fractured and right scapula as suspicious
+    other_bone_annotations = [
+        a for a in data["annotated_image"]["annotations"]
+        if "clavicle" in a["associated_rib"].lower()
+        or "scapula" in a["associated_rib"].lower()
+    ]
+
+    # Rib annotations should match rib fractures
+    rib_annotations = [
+        a for a in data["annotated_image"]["annotations"]
+        if a["associated_rib"].startswith(("L", "R"))
+        and "clavicle" not in a["associated_rib"].lower()
+        and "scapula" not in a["associated_rib"].lower()
+    ]
+    assert len(rib_annotations) == len(non_intact_ribs)
+
+    # Should have other bone annotations (simulation creates 2 non-intact)
+    assert len(other_bone_annotations) == 2  # Right clavicle + right scapula
+
+    # Total annotations = rib + other bones
+    assert len(data["annotated_image"]["annotations"]) == len(non_intact_ribs) + 2
 
 
 @pytest.mark.asyncio
